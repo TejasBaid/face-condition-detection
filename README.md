@@ -14,12 +14,12 @@ A Flutter application that uses real-time facial recognition to detect and analy
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/emotion-analyzer.git
+   git clone https://github.com/TejasBaid/face-condition-detection.git
    ```
 
 2. Navigate to the project directory:
    ```bash
-   cd emotion-analyzer
+   cd face-condition-detection
    ```
 
 3. Install dependencies:
