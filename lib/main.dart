@@ -1,11 +1,25 @@
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:camera/camera.dart';
 import 'screens/face_detection_screen.dart';
 
 late List<CameraDescription> _cameras;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
+  SystemChrome.setSystemUIOverlayStyle(
+    SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+    ),
+  );
+
   _cameras = await availableCameras();
   runApp(FaceDetectionApp());
 }
@@ -15,10 +29,16 @@ class FaceDetectionApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'Emotion Analysis',
       theme: ThemeData(
-        primarySwatch: Colors.indigo,
+        primaryColor: Colors.blueAccent,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: Color(0xFF1A1A1A),
+        scaffoldBackgroundColor: Color(0xFF121212),
+        appBarTheme: AppBarTheme(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          systemOverlayStyle: SystemUiOverlayStyle.light,
+        ),
         cardTheme: CardTheme(
           color: Colors.black.withOpacity(0.6),
           elevation: 0,
@@ -27,16 +47,37 @@ class FaceDetectionApp extends StatelessWidget {
             side: BorderSide(color: Colors.white10),
           ),
         ),
-        floatingActionButtonTheme: FloatingActionButtonThemeData(
-          backgroundColor: Colors.white.withOpacity(0.2),
-          elevation: 0,
-          extendedTextStyle: TextStyle(
+        dialogTheme: DialogTheme(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+          ),
+          backgroundColor: Color(0xFF1E1E1E),
+          elevation: 24,
+        ),
+        textTheme: TextTheme(
+          headlineMedium: TextStyle(
             fontWeight: FontWeight.bold,
-            letterSpacing: 1,
+            letterSpacing: 0.5,
+          ),
+          titleLarge: TextStyle(
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.5,
+          ),
+          titleMedium: TextStyle(
+            fontWeight: FontWeight.w600,
+          ),
+          bodyLarge: TextStyle(
+            letterSpacing: 0.2,
           ),
         ),
+        colorScheme: ColorScheme.dark(
+          primary: Colors.blueAccent,
+          secondary: Colors.purpleAccent,
+          surface: Color(0xFF1E1E1E),
+          background: Color(0xFF121212),
+        ),
       ),
-      home: FaceDetectionScreen(),
+      home: FaceDetectionScreen(cameras: _cameras),
     );
   }
 }

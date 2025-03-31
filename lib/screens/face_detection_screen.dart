@@ -2,18 +2,20 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui';
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
-import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/emotion_data.dart';
 import '../widgets/face_guide_painter.dart';
 
-late List<CameraDescription> _cameras;
-
 class FaceDetectionScreen extends StatefulWidget {
+  final List<CameraDescription> cameras;
+
+  const FaceDetectionScreen({Key? key, required this.cameras}) : super(key: key);
+
   @override
   _FaceDetectionScreenState createState() => _FaceDetectionScreenState();
 }
@@ -49,6 +51,8 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
   static const String _historyKey = 'emotion_history';
   bool _showHistory = false;
   bool _isAnimationsInitialized = false;
+  bool _showGuideOverlay = true;
+  bool _showAdvancedMetrics = false;
 
   @override
   void initState() {
@@ -82,11 +86,13 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
   }
 
   Future<void> _initializeCamera() async {
-    if (_cameras.isEmpty) return;
+    if (widget.cameras.isEmpty) {
+      return;
+    }
 
     try {
       _cameraController = CameraController(
-        _cameras[_cameraIndex],
+        widget.cameras[_cameraIndex],
         ResolutionPreset.high,
         enableAudio: false,
       );
@@ -107,24 +113,30 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
   }
 
   void _switchCamera() async {
-    if (_cameras.length < 2) return;
+    if (widget.cameras.length < 2) {
+      return;
+    }
 
-    if (_cameraController != null && _cameraController!.value.isStreamingImages) {
+    if (_cameraController != null &&
+        _cameraController!.value.isStreamingImages) {
       await _cameraController!.stopImageStream();
       await Future.delayed(Duration(milliseconds: 300));
     }
 
     await _cameraController?.dispose();
     _cameraController = null;
+
     setState(() => _isCameraInitialized = false);
 
-    _cameraIndex = (_cameraIndex + 1) % _cameras.length;
+    _cameraIndex = (_cameraIndex + 1) % widget.cameras.length;
+
     await Future.delayed(Duration(milliseconds: 500));
     await _initializeCamera();
   }
 
   void _startFaceDetection() {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (_cameraController == null || !_cameraController!.value.isInitialized)
+      return;
 
     _cameraController!.startImageStream((CameraImage image) async {
       if (_isDetecting) return;
@@ -137,6 +149,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
       try {
         final lightingStatus = _analyzeLighting(image);
+
         final InputImage inputImage = _convertCameraImage(image);
         final List<Face> faces = await _faceDetector.processImage(inputImage);
 
@@ -177,16 +190,19 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
   InputImage _convertCameraImage(CameraImage image) {
     final bytes = _convertYUV420ToNV21(image);
-    final rotation = _cameras[_cameraIndex].sensorOrientation;
+    final rotation = widget.cameras[_cameraIndex].sensorOrientation;
 
-    final metadata = InputImageMetadata(
+    final InputImageMetadata metadata = InputImageMetadata(
       size: Size(image.width.toDouble(), image.height.toDouble()),
       rotation: _mapRotation(rotation),
       format: InputImageFormat.nv21,
       bytesPerRow: image.width,
     );
 
-    return InputImage.fromBytes(bytes: bytes, metadata: metadata);
+    return InputImage.fromBytes(
+      bytes: bytes,
+      metadata: metadata,
+    );
   }
 
   Uint8List _convertYUV420ToNV21(CameraImage image) {
@@ -197,6 +213,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
     final Uint8List nv21 = Uint8List(ySize + uvSize);
 
     nv21.setRange(0, ySize, image.planes[0].bytes);
+
     final Uint8List u = image.planes[1].bytes;
     final Uint8List v = image.planes[2].bytes;
 
@@ -206,6 +223,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
         nv21[uvIndex++] = u[i];
       }
     }
+
     return nv21;
   }
 
@@ -232,7 +250,11 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
     double? headEulerAngleZ = face.headEulerAngleZ;
 
     if (smileProb == null) {
-      return {'mood': "Analyzing...", 'confidence': 0.0, 'color': Colors.white};
+      return {
+        'mood': "Analyzing...",
+        'confidence': 0.0,
+        'color': Colors.white,
+      };
     }
 
     double confidence = 0.0;
@@ -241,6 +263,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
     if (leftEyeOpen != null && rightEyeOpen != null) {
       double eyeOpenness = (leftEyeOpen + rightEyeOpen) / 2;
+
       if (eyeOpenness < 0.3) {
         mood = "Tired 😴";
         color = Colors.purple;
@@ -278,7 +301,11 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
       confidence *= 0.8;
     }
 
-    return {'mood': mood, 'confidence': confidence, 'color': color};
+    return {
+      'mood': mood,
+      'confidence': confidence,
+      'color': color,
+    };
   }
 
   Map<String, dynamic> _analyzeLighting(CameraImage image) {
@@ -304,15 +331,15 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
     bool isLowLight;
 
     if (normalizedBrightness < 0.3) {
-      status = "Low Light ⚠️";
+      status = "Low Light ";
       color = Colors.orange;
       isLowLight = true;
     } else if (normalizedBrightness > 0.8) {
-      status = "Too Bright ⚠️";
+      status = "Too Bright ";
       color = Colors.yellow;
       isLowLight = false;
     } else {
-      status = "Good Lighting ✅";
+      status = "Good Lighting ";
       color = Colors.green;
       isLowLight = false;
     }
@@ -338,6 +365,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
     if (leftEyeOpen != null && rightEyeOpen != null) {
       double eyeOpenness = (leftEyeOpen + rightEyeOpen) / 2;
+
       if (eyeOpenness < 0.3) {
         condition = "Fatigued";
         color = Colors.orange;
@@ -365,7 +393,11 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
       confidence *= 0.9;
     }
 
-    return {'condition': condition, 'color': color, 'confidence': confidence};
+    return {
+      'condition': condition,
+      'color': color,
+      'confidence': confidence,
+    };
   }
 
   Future<void> _loadEmotionHistory() async {
@@ -397,6 +429,7 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
           condition: _faceCondition,
           lightingStatus: _lightingStatus,
         ));
+
         if (_emotionHistory.length > 100) {
           _emotionHistory.removeAt(0);
         }
@@ -407,7 +440,9 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
   @override
   void dispose() {
-    _animationController?.dispose();
+    if (_isAnimationsInitialized && _animationController != null) {
+      _animationController!.dispose();
+    }
     _cameraController?.dispose();
     _faceDetector.close();
     super.dispose();
@@ -415,81 +450,355 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: ShaderMask(
-          shaderCallback: (bounds) => LinearGradient(
-            colors: [Colors.indigo, Colors.purple],
-          ).createShader(bounds),
-          child: Text("Face Analysis"),
+    return Theme(
+      data: ThemeData.dark().copyWith(
+        primaryColor: Color(0xFF6200EE),
+        scaffoldBackgroundColor: Color(0xFF121212),
+        cardColor: Color(0xFF1E1E1E),
+        colorScheme: ColorScheme.dark(
+          primary: Color(0xFF6200EE),
+          secondary: Color(0xFF03DAC6),
+          surface: Color(0xFF1E1E1E),
+          background: Color(0xFF121212),
         ),
-        actions: [
-          IconButton(
-            icon: AnimatedSwitcher(
-              duration: Duration(milliseconds: 300),
-              child: Icon(
-                _showHistory ? Icons.camera_alt : Icons.history,
-                key: ValueKey(_showHistory),
+      ),
+      child: Scaffold(
+        extendBodyBehindAppBar: true,
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          flexibleSpace: ClipRect(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+              child: Container(
+                color: Colors.black.withOpacity(0.2),
               ),
             ),
-            onPressed: () => setState(() => _showHistory = !_showHistory),
           ),
-          IconButton(
-            icon: Icon(Icons.info_outline),
-            onPressed: () => _showInfoDialog(context),
+          title: Row(
+            children: [
+              Container(
+                padding: EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF6200EE), Color(0xFF03DAC6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Icon(Icons.face, size: 20, color: Colors.white),
+              ),
+              SizedBox(width: 12),
+              Text(
+                "Emotion Analyzer",
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            IconButton(
+              icon: AnimatedSwitcher(
+                duration: Duration(milliseconds: 300),
+                child: Icon(
+                  _showHistory ? Icons.camera_alt : Icons.insights,
+                  key: ValueKey(_showHistory),
+                ),
+              ),
+              onPressed: () => setState(() => _showHistory = !_showHistory),
+              tooltip: _showHistory ? "Camera View" : "Emotion History",
+            ),
+            IconButton(
+              icon: Icon(Icons.info_outline),
+              onPressed: () => _showInfoDialog(context),
+              tooltip: "About",
+            ),
+          ],
+        ),
+        body: _showHistory ? _buildHistoryView() : _buildCameraView(),
+        bottomNavigationBar: _showHistory
+            ? null
+            : _buildBottomControls(),
+      ),
+    );
+  }
+
+  Widget _buildBottomControls() {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          height: 80,
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.5),
+            border: Border(
+              top: BorderSide(
+                color: Colors.white.withOpacity(0.1),
+                width: 0.5,
+              ),
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _buildBottomNavItem(
+                icon: Icons.grid_on,
+                label: "Guide",
+                isActive: _showGuideOverlay,
+                onTap: () => setState(() => _showGuideOverlay = !_showGuideOverlay),
+              ),
+              _buildCaptureButton(),
+              _buildBottomNavItem(
+                icon: Icons.insights,
+                label: "Metrics",
+                isActive: _showAdvancedMetrics,
+                onTap: () => setState(() => _showAdvancedMetrics = !_showAdvancedMetrics),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomNavItem({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isActive
+                  ? Color(0xFF6200EE).withOpacity(0.2)
+                  : Colors.transparent,
+              border: Border.all(
+                color: isActive ? Color(0xFF6200EE) : Colors.white30,
+                width: 1.5,
+              ),
+            ),
+            child: Icon(
+              icon,
+              color: isActive ? Color(0xFF6200EE) : Colors.white54,
+              size: 20,
+            ),
+          ),
+          SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isActive ? Color(0xFF6200EE) : Colors.white54,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+            ),
           ),
         ],
       ),
-      body: _showHistory ? _buildHistoryView() : _buildCameraView(),
+    );
+  }
+
+  Widget _buildCaptureButton() {
+    return GestureDetector(
+      onTap: _switchCamera,
+      child: Container(
+        width: 60,
+        height: 60,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: LinearGradient(
+            colors: [Color(0xFF6200EE), Color(0xFF03DAC6)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0xFF6200EE).withOpacity(0.5),
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Icon(
+          Icons.flip_camera_ios,
+          color: Colors.white,
+          size: 30,
+        ),
+      ),
     );
   }
 
   void _showInfoDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Color(0xFF2A2A2A),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: Colors.indigo.withOpacity(0.2)),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.psychology, color: Colors.indigo),
-            SizedBox(width: 12),
-            Text("About Face Analysis"),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildFeatureItem(Icons.face, "Emotion Detection"),
-            _buildFeatureItem(Icons.bedtime, "Fatigue Analysis"),
-            _buildFeatureItem(Icons.lightbulb, "Lighting Adaptation"),
-            _buildFeatureItem(Icons.speed, "Real-time Feedback"),
-            _buildFeatureItem(Icons.history, "Emotion History"),
-          ],
-        ),
-        actions: [
-          TextButton(
-            child: Text("Close", style: TextStyle(color: Colors.indigo)),
-            onPressed: () => Navigator.pop(context),
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.85,
+          decoration: BoxDecoration(
+            color: Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: Color(0xFF6200EE).withOpacity(0.3),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.5),
+                blurRadius: 20,
+                spreadRadius: 5,
+              ),
+            ],
           ),
-        ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(vertical: 20),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF6200EE), Color(0xFF03DAC6)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(24),
+                    topRight: Radius.circular(24),
+                  ),
+                ),
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.psychology, color: Colors.white, size: 28),
+                      SizedBox(width: 12),
+                      Text(
+                        "Emotion Analyzer",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Features",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6200EE),
+                      ),
+                    ),
+                    SizedBox(height: 16),
+                    _buildFeatureItem(
+                      icon: Icons.face,
+                      title: "Emotion Detection",
+                      description: "Analyzes facial expressions in real-time to identify emotional states",
+                    ),
+                    _buildFeatureItem(
+                      icon: Icons.nightlight_round,
+                      title: "Fatigue Analysis",
+                      description: "Detects signs of tiredness through eye openness tracking",
+                    ),
+                    _buildFeatureItem(
+                      icon: Icons.wb_sunny,
+                      title: "Lighting Assessment",
+                      description: "Evaluates ambient lighting conditions for optimal detection",
+                    ),
+                    _buildFeatureItem(
+                      icon: Icons.insights,
+                      title: "Emotion History",
+                      description: "Tracks and stores emotion data over time for analysis",
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: Colors.white12),
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    "Got it",
+                    style: TextStyle(
+                      color: Color(0xFF03DAC6),
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _buildFeatureItem(IconData icon, String text) {
+  Widget _buildFeatureItem({
+    required IconData icon,
+    required String title,
+    required String description,
+  }) {
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.only(bottom: 16),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: Colors.indigo, size: 20),
-          SizedBox(width: 12),
-          Text(text),
+          Container(
+            padding: EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Color(0xFF6200EE).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              icon,
+              color: Color(0xFF03DAC6),
+              size: 20,
+            ),
+          ),
+          SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -497,274 +806,657 @@ class _FaceDetectionScreenState extends State<FaceDetectionScreen>
 
   Widget _buildHistoryView() {
     if (_emotionHistory.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.history, size: 64, color: Colors.indigo.withOpacity(0.5)),
-            SizedBox(height: 16),
-            Text(
-              "No emotion history yet",
-              style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
-      );
+      return _buildEmptyHistoryView();
     }
 
-    return ListView.builder(
-      padding: EdgeInsets.all(16),
-      itemCount: _emotionHistory.length,
-      itemBuilder: (context, index) {
-        final data = _emotionHistory[_emotionHistory.length - 1 - index];
-        return AnimatedOpacity(
-          opacity: 1.0,
-          duration: Duration(milliseconds: 300),
-          child: Card(
-            margin: EdgeInsets.only(bottom: 12),
-            child: Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_getMoodColor(data.mood).withOpacity(0.2), Colors.transparent],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: ListTile(
-                contentPadding: EdgeInsets.all(16),
-                leading: Container(
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: _getMoodColor(data.mood).withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    _getMoodIcon(data.mood),
-                    color: _getMoodColor(data.mood),
-                    size: 32,
-                  ),
-                ),
-                title: Text(
-                  data.mood,
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _getMoodColor(data.mood)),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(height: 8),
-                    _buildSubtitleRow(Icons.face, data.condition),
-                    _buildSubtitleRow(Icons.lightbulb_outline, data.lightingStatus),
-                    _buildSubtitleRow(Icons.access_time, data.timestamp.toString().substring(0, 16)),
-                  ],
-                ),
-                trailing: SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: CircularProgressIndicator(
-                    value: data.confidence,
-                    backgroundColor: Colors.white12,
-                    valueColor: AlwaysStoppedAnimation<Color>(_getMoodColor(data.mood)),
-                    strokeWidth: 4,
-                  ),
-                ),
-              ),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF121212),
+            Color(0xFF262626),
+          ],
+        ),
+      ),
+      child: Column(
+        children: [
+          _buildHistoryHeader(),
+          Expanded(
+            child: ListView.builder(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+              itemCount: _emotionHistory.length,
+              itemBuilder: (context, index) {
+                final data = _emotionHistory[_emotionHistory.length - 1 - index];
+                return _buildHistoryCard(data, index);
+              },
             ),
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 
-  Widget _buildSubtitleRow(IconData icon, String text) {
-    return Padding(
-      padding: EdgeInsets.only(bottom: 4),
-      child: Row(
+  Widget _buildHistoryHeader() {
+    return Container(
+      padding: EdgeInsets.fromLTRB(20, 100, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 14, color: Colors.white54),
-          SizedBox(width: 8),
-          Expanded(child: Text(text, style: TextStyle(color: Colors.white70))),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "Emotion History",
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              IconButton(
+                icon: Icon(Icons.filter_list),
+                onPressed: () {},
+                tooltip: "Filter history",
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
+          Text(
+            "${_emotionHistory.length} entries recorded",
+            style: TextStyle(
+              color: Colors.white60,
+              fontSize: 14,
+            ),
+          ),
+          SizedBox(height: 20),
+          Container(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildFilterChip(label: "All", isSelected: true),
+                _buildFilterChip(label: "Happy", isSelected: false),
+                _buildFilterChip(label: "Sad", isSelected: false),
+                _buildFilterChip(label: "Tired", isSelected: false),
+                _buildFilterChip(label: "Stressed", isSelected: false),
+              ],
+            ),
+          ),
+          SizedBox(height: 10),
+          Divider(color: Colors.white12),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({required String label, required bool isSelected}) {
+    return Container(
+      margin: EdgeInsets.only(right: 10),
+      child: FilterChip(
+        label: Text(label),
+        selected: isSelected,
+        showCheckmark: false,
+        backgroundColor: Colors.white.withOpacity(0.08),
+        selectedColor: Color(0xFF6200EE).withOpacity(0.2),
+        labelStyle: TextStyle(
+          color: isSelected ? Color(0xFF6200EE) : Colors.white70,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: isSelected ? Color(0xFF6200EE) : Colors.transparent,
+            width: 1.5,
+          ),
+        ),
+        onSelected: (bool selected) {},
+      ),
+    );
+  }
+
+  Widget _buildHistoryCard(EmotionData data, int index) {
+    final color = _getMoodColor(data.mood);
+
+    return AnimatedOpacity(
+        opacity: 1.0,
+        duration: Duration(milliseconds: 300),
+    child: Container(
+    margin: EdgeInsets.only(bottom: 16),
+    decoration: BoxDecoration(
+    color: Color(0xFF1E1E1E),
+    borderRadius: BorderRadius.circular(16),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.2),
+          blurRadius: 8,
+          offset: Offset(0, 2),
+        ),
+      ],
+    ),
+      child: Column(
+        children: [
+          Container(
+            padding: EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+              gradient: LinearGradient(
+                colors: [color.withOpacity(0.3), Colors.transparent],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _getMoodIcon(data.mood),
+                      color: color,
+                      size: 24,
+                    ),
+                    SizedBox(width: 12),
+                    Text(
+                      data.mood,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.bubble_chart,
+                        size: 16,
+                        color: color,
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        "${(data.confidence * 100).toStringAsFixed(0)}%",
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.access_time,
+                      size: 16,
+                      color: Colors.white60,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      _formatDate(data.timestamp),
+                      style: TextStyle(
+                        color: Colors.white60,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildDetailItem(
+                        icon: Icons.face,
+                        label: "Condition",
+                        value: data.condition,
+                      ),
+                    ),
+                    Expanded(
+                      child: _buildDetailItem(
+                        icon: Icons.lightbulb_outline,
+                        label: "Lighting",
+                        value: data.lightingStatus,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+    );
+  }
+
+  Widget _buildDetailItem({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(
+          icon,
+          size: 16,
+          color: Colors.white60,
+        ),
+        SizedBox(width: 8),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                ),
+              ),
+              SizedBox(height: 4),
+              Text(
+                value,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatDate(DateTime dateTime) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final dateToCheck = DateTime(
+      dateTime.year,
+      dateTime.month,
+      dateTime.day,
+    );
+
+    if (dateToCheck == today) {
+      return "Today, ${_formatTime(dateTime)}";
+    } else if (dateToCheck == yesterday) {
+      return "Yesterday, ${_formatTime(dateTime)}";
+    } else {
+      return "${dateTime.day}/${dateTime.month}/${dateTime.year}, ${_formatTime(dateTime)}";
+    }
+  }
+
+  String _formatTime(DateTime dateTime) {
+    final hour = dateTime.hour.toString().padLeft(2, '0');
+    final minute = dateTime.minute.toString().padLeft(2, '0');
+    return "$hour:$minute";
+  }
+
+  Widget _buildEmptyHistoryView() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF121212),
+            Color(0xFF262626),
+          ],
+        ),
+      ),
+      width: double.infinity,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(height: 100),
+          Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              color: Color(0xFF1E1E1E),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.timeline,
+              size: 60,
+              color: Color(0xFF6200EE),
+            ),
+          ),
+          SizedBox(height: 32),
+          Text(
+            "No Emotion History",
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 16),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              "Start using the emotion analyzer to track and record your mood patterns over time.",
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          SizedBox(height: 32),
+          ElevatedButton(
+            onPressed: () {
+              setState(() {
+                _showHistory = false;
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Color(0xFF6200EE),
+              padding: EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.camera_alt),
+                SizedBox(width: 8),
+                Text(
+                  "Go to Camera",
+                  style: TextStyle(fontSize: 16),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildCameraView() {
-    return _isCameraInitialized
-        ? Stack(
+    if (!_isCameraInitialized) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation(Color(0xFF6200EE)),
+            ),
+            SizedBox(height: 16),
+            Text("Initializing camera..."),
+          ],
+        ),
+      );
+    }
+
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        Positioned.fill(
-          child: AspectRatio(
-            aspectRatio: _cameraController!.value.aspectRatio,
-            child: CameraPreview(_cameraController!),
+        CameraPreview(_cameraController!),
+        if (_showGuideOverlay)
+          CustomPaint(
+            painter: FaceGuidePainter(),
           ),
-        ),
-        Positioned.fill(
-          child: CustomPaint(painter: FaceGuidePainter()),
-        ),
-        Positioned(
-          top: 100,
-          right: 20,
-          child: Column(
-            children: [
-              _buildControlButton(icon: Icons.flip_camera_ios, onPressed: _switchCamera, tooltip: 'Switch Camera'),
-              SizedBox(height: 16),
-              _buildControlButton(icon: Icons.flash_auto, onPressed: () {}, tooltip: 'Flash'),
-              SizedBox(height: 16),
-              _buildControlButton(icon: Icons.grid_on, onPressed: () {}, tooltip: 'Grid'),
-            ],
-          ),
-        ),
-        if (_isAnimationsInitialized && _animationController != null)
-          AnimatedBuilder(
-            animation: _animationController!,
-            builder: (context, child) {
-              return Positioned(
-                bottom: 90 + _slideAnimation!.value,
-                left: 20,
-                right: 20,
-                child: Opacity(
-                  opacity: _fadeAnimation!.value,
+        _buildOverlayInfo(),
+        _buildBottomInfoPanel(),
+      ],
+    );
+  }
+
+  Widget _buildOverlayInfo() {
+    return SafeArea(
+      child: Container(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_isAnimationsInitialized)
+              FadeTransition(
+                opacity: _fadeAnimation!,
+                child: SlideTransition(
+                  position: Tween(
+                    begin: Offset(0, -0.5),
+                    end: Offset.zero,
+                  ).animate(_animationController!),
                   child: Container(
+                    padding: EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: _moodColor.withOpacity(0.3), width: 2),
+                      color: Colors.black.withOpacity(0.6),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.2),
+                        width: 0.5,
+                      ),
                     ),
-                    padding: EdgeInsets.all(20),
-                    child: Column(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildQuickStatusChip(icon: Icons.lightbulb_outline, text: _lightingStatus, color: _lightingColor),
-                            _buildQuickStatusChip(icon: Icons.face, text: _faceCondition, color: _conditionColor),
-                          ],
+                        Icon(
+                          Icons.wb_sunny,
+                          color: _lightingColor,
+                          size: 18,
                         ),
-                        SizedBox(height: 16),
-                        _buildEnhancedMoodContainer(),
-                        SizedBox(height: 16),
-                        _buildConfidenceBar(),
+                        SizedBox(width: 8),
+                        Text(
+                          _lightingStatus,
+                          style: TextStyle(
+                            color: _lightingColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 ),
-              );
-            },
-          ),
-      ],
-    )
-        : _buildLoadingView();
-  }
-
-  Widget _buildControlButton({required IconData icon, required VoidCallback onPressed, required String tooltip}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black54,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white24),
-      ),
-      child: IconButton(icon: Icon(icon), onPressed: onPressed, tooltip: tooltip, color: Colors.white, iconSize: 24),
-    );
-  }
-
-  Widget _buildQuickStatusChip({required IconData icon, required String text, required Color color}) {
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 16),
-          SizedBox(width: 8),
-          Text(text, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEnhancedMoodContainer() {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _moodColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _moodColor.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            padding: EdgeInsets.all(12),
-            decoration: BoxDecoration(color: _moodColor.withOpacity(0.2), shape: BoxShape.circle),
-            child: Icon(_getMoodIcon(_mood), color: _moodColor, size: 40),
-          ),
-          SizedBox(height: 12),
-          Text(_mood, style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _moodColor)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildConfidenceBar() {
-    return Column(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: LinearProgressIndicator(
-            value: _confidence,
-            backgroundColor: Colors.white12,
-            valueColor: AlwaysStoppedAnimation<Color>(_moodColor),
-            minHeight: 8,
-          ),
-        ),
-        SizedBox(height: 8),
-        Text("Confidence: ${(_confidence * 100).toStringAsFixed(1)}%",
-            style: TextStyle(fontSize: 14, color: Colors.white70, fontWeight: FontWeight.w500)),
-      ],
-    );
-  }
-
-  Widget _buildLoadingView() {
-    return Container(
-      color: Colors.black,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 80,
-              height: 80,
-              child: CircularProgressIndicator(
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.indigo),
-                strokeWidth: 6,
               ),
-            ),
-            SizedBox(height: 24),
-            Text("Initializing Camera...",
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w500, letterSpacing: 1)),
+            Spacer(),
+            if (_showAdvancedMetrics)
+              Container(
+                margin: EdgeInsets.only(bottom: 16),
+                padding: EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.7),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.2),
+                    width: 0.5,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Advanced Metrics",
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Color(0xFF03DAC6),
+                      ),
+                    ),
+                    SizedBox(height: 12),
+                    _buildMetricItem(
+                      label: "Face Condition",
+                      value: _faceCondition,
+                      color: _conditionColor,
+                    ),
+                    SizedBox(height: 8),
+                    _buildMetricItem(
+                      label: "Confidence",
+                      value: "${(_confidence * 100).toStringAsFixed(0)}%",
+                      color: _moodColor,
+                    ),
+                    SizedBox(height: 8),
+                    _buildMetricItem(
+                      label: "Processing Rate",
+                      value: "${(1 / _processingInterval).toStringAsFixed(1)} FPS",
+                      color: Colors.white,
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  IconData _getMoodIcon(String mood) {
-    if (mood.contains("Happy")) return Icons.sentiment_very_satisfied;
-    if (mood.contains("Sad")) return Icons.sentiment_very_dissatisfied;
-    if (mood.contains("Tired")) return Icons.sentiment_dissatisfied;
-    if (mood.contains("Stressed")) return Icons.mood_bad;
-    return Icons.sentiment_neutral;
+  Widget _buildMetricItem({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 120,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomInfoPanel() {
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 80,
+      child: Container(
+        margin: EdgeInsets.symmetric(horizontal: 16),
+        padding: EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.7),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: _moodColor.withOpacity(0.5),
+            width: 1.5,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: _moodColor.withOpacity(0.3),
+              blurRadius: 12,
+              spreadRadius: 2,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _getMoodIcon(_mood),
+                  color: _moodColor,
+                  size: 28,
+                ),
+                SizedBox(width: 12),
+                Text(
+                  _mood,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              height: 8,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: _confidence,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    gradient: LinearGradient(
+                      colors: [_moodColor.withOpacity(0.7), _moodColor],
+                      begin: Alignment.centerLeft,
+                      end: Alignment.centerRight,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Color _getMoodColor(String mood) {
-    if (mood.contains("Happy")) return Colors.green;
-    if (mood.contains("Sad")) return Colors.blue;
-    if (mood.contains("Tired")) return Colors.purple;
-    if (mood.contains("Stressed")) return Colors.red;
-    return Colors.white;
+    if (mood.contains("Happy")) {
+      return Colors.green;
+    } else if (mood.contains("Sad")) {
+      return Colors.blue;
+    } else if (mood.contains("Tired")) {
+      return Colors.purple;
+    } else if (mood.contains("Stressed")) {
+      return Colors.red;
+    } else if (mood.contains("Looking Away")) {
+      return Colors.yellow;
+    } else {
+      return Colors.white;
+    }
+  }
+
+  IconData _getMoodIcon(String mood) {
+    if (mood.contains("Happy") || mood.contains("😄") || mood.contains("🙂")) {
+      return Icons.sentiment_very_satisfied;
+    } else if (mood.contains("Sad") || mood.contains("😢")) {
+      return Icons.sentiment_dissatisfied;
+    } else if (mood.contains("Tired") || mood.contains("😴")) {
+      return Icons.nightlight_round;
+    } else if (mood.contains("Stressed") || mood.contains("😫")) {
+      return Icons.sentiment_very_dissatisfied;
+    } else if (mood.contains("Looking Away") || mood.contains("👀")) {
+      return Icons.remove_red_eye;
+    } else if (mood.contains("No face")) {
+      return Icons.face_retouching_off;
+    } else if (mood.contains("Analyzing")) {
+      return Icons.psychology;
+    } else {
+      return Icons.sentiment_neutral;
+    }
   }
 }
